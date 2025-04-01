@@ -1,18 +1,19 @@
 // routes/api.js
-
 const express = require('express');
 const axios = require('axios');
 const pool = require('../config/db'); // pool de MySQL
 const router = express.Router();
 
-// Endpoint para actualizar la base de datos con datos de la API externa
-router.get('/update-data', async (req, res) => {
+// Función que actualiza la base de datos usando la API externa
+async function updateData() {
   try {
-    const apiResponse = await axios.get('http://moriahmkt.com/iotapp/updated/');
+    const apiResponse = await axios.get('https://moriahmkt.com/iotapp/test/');
     const data = apiResponse.data;
 
     // Procesar datos globales
-    const [globalResult] = await pool.query('SELECT * FROM historico_sensores_globales ORDER BY fecha_registro DESC LIMIT 1');
+    const [globalResult] = await pool.query(
+      'SELECT * FROM historico_sensores_globales ORDER BY fecha_registro DESC LIMIT 1'
+    );
     const lastGlobal = globalResult[0];
 
     if (
@@ -36,17 +37,19 @@ router.get('/update-data', async (req, res) => {
     }
 
     // Procesar cada parcela
-    const apiParcelasIds = data.parcelas.map(p => p.id);
+    // Convertir IDs a número
+    const apiParcelasIds = data.parcelas.map(p => Number(p.id));
+    console.log("API Parcelas IDs:", apiParcelasIds);
 
     for (const parcela of data.parcelas) {
-      const [result] = await pool.query('SELECT * FROM parcelas WHERE id = ?', [parcela.id]);
+      const [result] = await pool.query('SELECT * FROM parcelas WHERE id = ?', [Number(parcela.id)]);
       if (result.length === 0) {
         const insertParcelaQuery = `
           INSERT INTO parcelas (id, nombre, ubicacion, responsable, tipo_cultivo, ultimo_riego, latitud, longitud, is_deleted)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, false)
         `;
         await pool.query(insertParcelaQuery, [
-          parcela.id,
+          Number(parcela.id),
           parcela.nombre,
           parcela.ubicacion,
           parcela.responsable,
@@ -70,13 +73,13 @@ router.get('/update-data', async (req, res) => {
           parcela.ultimo_riego,
           parcela.latitud,
           parcela.longitud,
-          parcela.id,
+          Number(parcela.id),
         ]);
       }
 
       const [sensorResult] = await pool.query(
         'SELECT * FROM historico_sensores_parcela WHERE parcela_id = ? ORDER BY fecha_registro DESC LIMIT 1',
-        [parcela.id]
+        [Number(parcela.id)]
       );
       const lastSensor = sensorResult[0];
 
@@ -93,7 +96,7 @@ router.get('/update-data', async (req, res) => {
           VALUES (?, ?, ?, ?, ?)
         `;
         await pool.query(insertSensorQuery, [
-          parcela.id,
+          Number(parcela.id),
           parcela.sensor.humedad,
           parcela.sensor.temperatura,
           parcela.sensor.lluvia,
@@ -102,19 +105,31 @@ router.get('/update-data', async (req, res) => {
       }
     }
 
-    // Marcar parcelas eliminadas
+    // Marcar parcelas eliminadas: si en la BD existen parcelas que no están en la API, se actualiza is_deleted a 1
     const [dbParcelasResult] = await pool.query('SELECT id FROM parcelas WHERE is_deleted = false');
-    const dbParcelasIds = dbParcelasResult.map(row => row.id);
+    const dbParcelasIds = dbParcelasResult.map(row => Number(row.id));
+    console.log("DB Parcelas IDs:", dbParcelasIds);
 
     for (const id of dbParcelasIds) {
       if (!apiParcelasIds.includes(id)) {
+        console.log(`Marcando la parcela ${id} como eliminada`);
         await pool.query('UPDATE parcelas SET is_deleted = true WHERE id = ?', [id]);
       }
     }
 
+    console.log("Actualización completada");
+  } catch (err) {
+    console.error("Error en updateData:", err);
+    throw err;
+  }
+}
+
+// Endpoint para actualizar la BD manualmente
+router.get('/update-data', async (req, res) => {
+  try {
+    await updateData();
     res.json({ status: 'Base de datos actualizada correctamente' });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -125,7 +140,6 @@ router.get('/parcelas', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM parcelas WHERE is_deleted = false');
     res.json(rows);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -136,11 +150,10 @@ router.get('/historico/parcelas/:id', async (req, res) => {
     const { id } = req.params;
     const [rows] = await pool.query(
       'SELECT * FROM historico_sensores_parcela WHERE parcela_id = ? ORDER BY fecha_registro ASC',
-      [id]
+      [Number(id)]
     );
     res.json(rows);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -151,20 +164,15 @@ router.get('/parcelas/eliminadas', async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM parcelas WHERE is_deleted = true');
     res.json(rows);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// NUEVO Endpoint para mostrar el contenido de la BD
+// Endpoint para mostrar el contenido completo de la BD (para depuración)
 router.get('/dump', async (req, res) => {
   try {
-    // Consulta la tabla 'parcelas'
     const [parcelas] = await pool.query('SELECT * FROM parcelas');
-    // Consulta la tabla 'historico_sensores_parcela'
     const [historico] = await pool.query('SELECT * FROM historico_sensores_parcela');
-
-    // Si usas 'historico_sensores_globales'
     let globales = [];
     try {
       const [globalResult] = await pool.query('SELECT * FROM historico_sensores_globales');
@@ -172,16 +180,14 @@ router.get('/dump', async (req, res) => {
     } catch (err) {
       console.warn("No se encontró la tabla historico_sensores_globales (opcional).");
     }
-
     res.json({
       parcelas,
       historico,
       globales
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
 
-module.exports = router;
+module.exports = { router, updateData };
