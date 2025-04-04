@@ -16,7 +16,7 @@ app.use('/api', router);
 
 // Llamada inicial y luego cada 30 segundos para actualizar la BD
 updateData();
-setInterval(updateData, 10000 * 1000);
+setInterval(updateData, 10 * 1000);
 
 app.listen(port, () => {
   console.log(`Servidor corriendo en el puerto ${port}`);
