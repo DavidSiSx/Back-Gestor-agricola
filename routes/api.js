@@ -26,7 +26,7 @@ const verifyToken = (req, res, next) => {
   }
 }
 
-// Función que actualiza la base de datos usando la API externa
+// Modificar la función updateData para verificar más estrictamente los datos de la API
 async function updateData() {
   try {
     const apiResponse = await axios.get("https://moriahmkt.com/iotapp/updated/")
@@ -34,23 +34,30 @@ async function updateData() {
 
     console.log("Datos recibidos de la API:", JSON.stringify(data, null, 2))
 
-    // Verificar si los datos tienen la estructura esperada
-    if (!data || !data.sensores) {
-      console.error("Error: La API no devolvió datos de sensores válidos")
-      // Crear un objeto de sensores con valores predeterminados
-      data.sensores = {
-        humedad: 0,
-        temperatura: 0,
-        lluvia: 0,
-        sol: 0,
-      }
+    // Verificar si los datos tienen la estructura esperada y SIEMPRE inicializar con 0
+    // Independientemente de lo que devuelva la API
+    data.sensores = {
+      humedad: 0,
+      temperatura: 0,
+      lluvia: 0,
+      sol: 0,
     }
 
-    // Asegurarse de que todos los valores de sensores existan
-    data.sensores.humedad = data.sensores.humedad !== undefined ? data.sensores.humedad : 0
-    data.sensores.temperatura = data.sensores.temperatura !== undefined ? data.sensores.temperatura : 0
-    data.sensores.lluvia = data.sensores.lluvia !== undefined ? data.sensores.lluvia : 0
-    data.sensores.sol = data.sensores.sol !== undefined ? data.sensores.sol : 0
+    // Solo usar los valores de la API si existen y son números válidos
+    if (data && data.sensores) {
+      if (typeof data.sensores.humedad === "number" && !isNaN(data.sensores.humedad)) {
+        data.sensores.humedad = data.sensores.humedad
+      }
+      if (typeof data.sensores.temperatura === "number" && !isNaN(data.sensores.temperatura)) {
+        data.sensores.temperatura = data.sensores.temperatura
+      }
+      if (typeof data.sensores.lluvia === "number" && !isNaN(data.sensores.lluvia)) {
+        data.sensores.lluvia = data.sensores.lluvia
+      }
+      if (typeof data.sensores.sol === "number" && !isNaN(data.sensores.sol)) {
+        data.sensores.sol = data.sensores.sol
+      }
+    }
 
     // Procesar datos globales
     const [globalResult] = await pool.query(
@@ -58,25 +65,18 @@ async function updateData() {
     )
     const lastGlobal = globalResult[0]
 
-    if (
-      !lastGlobal ||
-      lastGlobal.humedad_global != data.sensores.humedad ||
-      lastGlobal.temperatura_global != data.sensores.temperatura ||
-      lastGlobal.lluvia_global != data.sensores.lluvia ||
-      lastGlobal.sol_global != data.sensores.sol
-    ) {
-      const insertGlobalQuery = `
-        INSERT INTO historico_sensores_globales
-          (humedad_global, temperatura_global, lluvia_global, sol_global)
-        VALUES (?, ?, ?, ?)
-      `
-      await pool.query(insertGlobalQuery, [
-        data.sensores.humedad,
-        data.sensores.temperatura,
-        data.sensores.lluvia,
-        data.sensores.sol,
-      ])
-    }
+    // Siempre insertar nuevos valores (incluso si son 0) para reflejar el estado actual
+    const insertGlobalQuery = `
+      INSERT INTO historico_sensores_globales
+        (humedad_global, temperatura_global, lluvia_global, sol_global)
+      VALUES (?, ?, ?, ?)
+    `
+    await pool.query(insertGlobalQuery, [
+      data.sensores.humedad,
+      data.sensores.temperatura,
+      data.sensores.lluvia,
+      data.sensores.sol,
+    ])
 
     // Verificar si hay datos de parcelas
     if (!data.parcelas || !Array.isArray(data.parcelas) || data.parcelas.length === 0) {
@@ -191,18 +191,39 @@ async function updateData() {
     console.log("Actualización completada")
   } catch (err) {
     console.error("Error en updateData:", err)
+    // En caso de error, insertar valores 0 en la base de datos
+    try {
+      const insertGlobalQuery = `
+        INSERT INTO historico_sensores_globales
+          (humedad_global, temperatura_global, lluvia_global, sol_global)
+        VALUES (?, ?, ?, ?)
+      `
+      await pool.query(insertGlobalQuery, [0, 0, 0, 0])
+      console.log("Se insertaron valores 0 debido a un error en la API")
+    } catch (insertErr) {
+      console.error("Error al insertar valores por defecto:", insertErr)
+    }
     throw err
   }
 }
 
-// Endpoint para obtener datos generales (sensores globales)
+// Modificar el endpoint /datos-generales para siempre devolver los datos más recientes
+// o valores 0 si no hay datos
 router.get("/datos-generales", async (req, res) => {
   try {
+    // Forzar una actualización de datos antes de responder
+    try {
+      await updateData()
+    } catch (updateErr) {
+      console.error("Error al actualizar datos:", updateErr)
+      // Continuar con la ejecución incluso si hay error en la actualización
+    }
+
     // Obtener el registro más reciente de sensores globales
     const [rows] = await pool.query("SELECT * FROM historico_sensores_globales ORDER BY fecha_registro DESC LIMIT 1")
 
     if (rows.length === 0) {
-      // Si no hay datos, devolver valores predeterminados
+      // Si no hay datos, devolver valores 0
       return res.json({
         status: "success",
         data: {
@@ -216,11 +237,16 @@ router.get("/datos-generales", async (req, res) => {
     }
 
     // Mapear los nombres de columnas de la BD a los nombres esperados por el frontend
+    // y asegurarse de que sean números válidos o 0
     const data = {
-      temperatura: rows[0].temperatura_global || 0,
-      humedad: rows[0].humedad_global || 0,
-      lluvia: rows[0].lluvia_global || 0,
-      sol: rows[0].sol_global || 0,
+      temperatura:
+        typeof rows[0].temperatura_global === "number" && !isNaN(rows[0].temperatura_global)
+          ? rows[0].temperatura_global
+          : 0,
+      humedad:
+        typeof rows[0].humedad_global === "number" && !isNaN(rows[0].humedad_global) ? rows[0].humedad_global : 0,
+      lluvia: typeof rows[0].lluvia_global === "number" && !isNaN(rows[0].lluvia_global) ? rows[0].lluvia_global : 0,
+      sol: typeof rows[0].sol_global === "number" && !isNaN(rows[0].sol_global) ? rows[0].sol_global : 0,
       fecha: rows[0].fecha_registro,
     }
 
@@ -230,7 +256,7 @@ router.get("/datos-generales", async (req, res) => {
     })
   } catch (err) {
     console.error("Error al obtener datos generales:", err)
-    // En caso de error, devolver valores predeterminados
+    // En caso de error, devolver valores 0
     res.json({
       status: "error",
       message: err.message,
