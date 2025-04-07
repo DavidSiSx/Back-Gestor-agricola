@@ -11,8 +11,6 @@ const JWT_EXPIRES_IN = "24h"
 
 // URL de la API externa - ACTUALIZADA
 const API_EXTERNAL_URL = "https://moriahmkt.com/iotapp/updated/"
-// URL de la API de zonas de riego
-const API_ZONAS_RIEGO_URL = "http://moriahmkt.com/iotapp/am"
 
 // Middleware para verificar token
 const verifyToken = (req, res, next) => {
@@ -207,9 +205,9 @@ router.get("/datos-generales", async (req, res) => {
     // Obtener datos directamente de la API externa
     const apiResponse = await axios.get(API_EXTERNAL_URL)
     const apiData = apiResponse.data
-
+    
     console.log("Datos recibidos directamente de la API:", JSON.stringify(apiData, null, 2))
-
+    
     // Verificar si los datos tienen la estructura esperada
     if (!apiData || !apiData.sensores) {
       console.error("Error: La API no devolvió datos de sensores válidos")
@@ -225,36 +223,20 @@ router.get("/datos-generales", async (req, res) => {
         },
       })
     }
-
+    
     // Asegurarse de que todos los valores de sensores existan y sean números válidos
-    const temperatura =
-      typeof apiData.sensores.temperatura === "number"
-        ? apiData.sensores.temperatura
-        : typeof apiData.sensores.temperatura === "string"
-          ? Number.parseFloat(apiData.sensores.temperatura)
-          : 0
-
-    const humedad =
-      typeof apiData.sensores.humedad === "number"
-        ? apiData.sensores.humedad
-        : typeof apiData.sensores.humedad === "string"
-          ? Number.parseFloat(apiData.sensores.humedad)
-          : 0
-
-    const lluvia =
-      typeof apiData.sensores.lluvia === "number"
-        ? apiData.sensores.lluvia
-        : typeof apiData.sensores.lluvia === "string"
-          ? Number.parseFloat(apiData.sensores.lluvia)
-          : 0
-
-    const sol =
-      typeof apiData.sensores.sol === "number"
-        ? apiData.sensores.sol
-        : typeof apiData.sensores.sol === "string"
-          ? Number.parseFloat(apiData.sensores.sol)
-          : 0
-
+    const temperatura = typeof apiData.sensores.temperatura === 'number' ? apiData.sensores.temperatura : 
+                       (typeof apiData.sensores.temperatura === 'string' ? parseFloat(apiData.sensores.temperatura) : 0)
+    
+    const humedad = typeof apiData.sensores.humedad === 'number' ? apiData.sensores.humedad : 
+                   (typeof apiData.sensores.humedad === 'string' ? parseFloat(apiData.sensores.humedad) : 0)
+    
+    const lluvia = typeof apiData.sensores.lluvia === 'number' ? apiData.sensores.lluvia : 
+                  (typeof apiData.sensores.lluvia === 'string' ? parseFloat(apiData.sensores.lluvia) : 0)
+    
+    const sol = typeof apiData.sensores.sol === 'number' ? apiData.sensores.sol : 
+               (typeof apiData.sensores.sol === 'string' ? parseFloat(apiData.sensores.sol) : 0)
+    
     // Devolver los datos directamente de la API
     res.json({
       status: "success",
@@ -265,15 +247,16 @@ router.get("/datos-generales", async (req, res) => {
         sol,
         fecha: new Date().toISOString(),
       },
-      source: "api_direct",
+      source: "api_direct"
     })
+    
   } catch (err) {
     console.error("Error al obtener datos generales desde la API:", err)
-
+    
     // Intentar obtener el último registro de la base de datos como respaldo
     try {
       const [rows] = await pool.query("SELECT * FROM historico_sensores_globales ORDER BY fecha_registro DESC LIMIT 1")
-
+      
       if (rows.length === 0) {
         // Si no hay datos en la BD, devolver valores predeterminados
         return res.json({
@@ -285,10 +268,10 @@ router.get("/datos-generales", async (req, res) => {
             sol: 0,
             fecha: new Date().toISOString(),
           },
-          source: "default_values",
+          source: "default_values"
         })
       }
-
+      
       // Mapear los nombres de columnas de la BD a los nombres esperados por el frontend
       const data = {
         temperatura: rows[0].temperatura_global || 0,
@@ -297,11 +280,11 @@ router.get("/datos-generales", async (req, res) => {
         sol: rows[0].sol_global || 0,
         fecha: rows[0].fecha_registro,
       }
-
+      
       res.json({
         status: "success",
         data,
-        source: "database_fallback",
+        source: "database_fallback"
       })
     } catch (dbErr) {
       // En caso de error, devolver valores predeterminados
@@ -315,146 +298,9 @@ router.get("/datos-generales", async (req, res) => {
           sol: 0,
           fecha: new Date().toISOString(),
         },
-        source: "error_fallback",
+        source: "error_fallback"
       })
     }
-  }
-})
-
-// Modificar el endpoint para obtener zonas de riego para que use datos reales de la API externa
-router.get("/zonas-riego", verifyToken, async (req, res) => {
-  try {
-    // Obtener datos directamente de la API externa
-    console.log("Obteniendo datos directamente de la API externa:", API_ZONAS_RIEGO_URL)
-    const apiResponse = await axios.get(API_ZONAS_RIEGO_URL)
-    const apiData = apiResponse.data
-
-    console.log("Datos recibidos de la API externa:", JSON.stringify(apiData, null, 2))
-
-    // Verificar si los datos tienen la estructura esperada
-    if (!apiData || !apiData.zonas || !Array.isArray(apiData.zonas)) {
-      console.error("Error: La API externa no devolvió datos de zonas de riego válidos")
-      return res.status(500).json({
-        status: "error",
-        message: "La API externa no devolvió datos válidos",
-        data: [],
-      })
-    }
-
-    // Devolver los datos directamente de la API externa
-    return res.json({
-      status: "success",
-      data: apiData.zonas,
-      source: "api_direct",
-    })
-  } catch (err) {
-    console.error("Error al obtener zonas de riego desde la API externa:", err)
-
-    // Intentar obtener datos de la base de datos como respaldo
-    try {
-      const [rows] = await pool.query("SELECT * FROM zonas_riego ORDER BY sector")
-
-      if (rows.length > 0) {
-        return res.json({
-          status: "success",
-          data: rows,
-          source: "database_fallback",
-        })
-      } else {
-        // Si no hay datos en la base de datos, devolver un error
-        return res.status(500).json({
-          status: "error",
-          message: "No se pudieron obtener datos de zonas de riego y no hay respaldo en la base de datos",
-          data: [],
-        })
-      }
-    } catch (dbErr) {
-      console.error("Error al obtener datos de respaldo de la base de datos:", dbErr)
-      return res.status(500).json({
-        status: "error",
-        message: "Error al obtener datos de zonas de riego",
-        data: [],
-      })
-    }
-  }
-})
-
-// Añadir un endpoint para actualizar manualmente las zonas de riego
-router.get("/update-zonas-riego", verifyToken, async (req, res) => {
-  try {
-    // Verificar si el usuario es admin (opcional)
-    if (req.user.rol !== "admin") {
-      return res.status(403).json({ error: "No tienes permisos para realizar esta acción." })
-    }
-
-    // Obtener datos directamente de la API externa
-    const apiResponse = await axios.get(API_ZONAS_RIEGO_URL)
-    const apiData = apiResponse.data
-
-    // Verificar si los datos tienen la estructura esperada
-    if (!apiData || !apiData.zonas || !Array.isArray(apiData.zonas)) {
-      return res.status(500).json({ error: "La API externa no devolvió datos válidos" })
-    }
-
-    // Actualizar la base de datos con los datos de la API
-    for (const zona of apiData.zonas) {
-      // Verificar si la zona tiene todos los datos necesarios
-      if (!zona.id || !zona.sector || !zona.nombre || !zona.estado) {
-        console.warn("Zona sin datos completos, omitiendo:", zona)
-        continue
-      }
-
-      // Verificar si la zona ya existe en la base de datos
-      const [result] = await pool.query("SELECT * FROM zonas_riego WHERE id = ?", [Number(zona.id)])
-
-      if (result.length === 0) {
-        // Si no existe, insertar nueva zona
-        const insertZonaQuery = `
-          INSERT INTO zonas_riego (
-            id, sector, nombre, tipo_riego, estado, latitud, longitud, 
-            motivo, fecha, color
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `
-        await pool.query(insertZonaQuery, [
-          Number(zona.id),
-          zona.sector,
-          zona.nombre,
-          zona.tipo_riego || null,
-          zona.estado,
-          zona.latitud || null,
-          zona.longitud || null,
-          zona.motivo || null,
-          zona.fecha || new Date().toISOString(),
-          zona.color || null,
-        ])
-      } else {
-        // Si existe, actualizar la zona
-        const updateZonaQuery = `
-          UPDATE zonas_riego
-          SET sector = ?, nombre = ?, tipo_riego = ?, estado = ?,
-              latitud = ?, longitud = ?, motivo = ?, fecha = ?, color = ?
-          WHERE id = ?
-        `
-        await pool.query(updateZonaQuery, [
-          zona.sector,
-          zona.nombre,
-          zona.tipo_riego || result[0].tipo_riego,
-          zona.estado,
-          zona.latitud || result[0].latitud,
-          zona.longitud || result[0].longitud,
-          zona.motivo || result[0].motivo,
-          zona.fecha || result[0].fecha,
-          zona.color || result[0].color,
-          Number(zona.id),
-        ])
-      }
-    }
-
-    res.json({ status: "Zonas de riego actualizadas correctamente desde la API externa" })
-  } catch (err) {
-    console.error("Error al actualizar zonas de riego desde la API externa:", err)
-    res.status(500).json({ error: err.message })
   }
 })
 
@@ -642,4 +488,3 @@ router.get("/dump", verifyToken, async (req, res) => {
 })
 
 module.exports = { router, updateData }
-
